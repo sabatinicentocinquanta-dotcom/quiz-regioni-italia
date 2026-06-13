@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quiz Geografico Italia</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', sans-serif;
+    background: #1a1a2e;
+    color: #eee;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+  }
+  h1 { font-size: 2rem; margin-bottom: 6px; color: #f0c040; letter-spacing: 1px; }
+
+  #hud {
+    display: flex; gap: 30px; margin-bottom: 14px;
+    background: #16213e; padding: 12px 28px; border-radius: 12px;
+    font-size: 1.1rem; font-weight: bold;
+  }
+  .hud-item span { color: #f0c040; }
+
+  #controls { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
+  #status-msg { font-size: 0.95rem; color: #aaa; }
+
+  #question-box {
+    background: #16213e;
+    border-radius: 14px;
+    padding: 14px 28px;
+    margin-bottom: 14px;
+    font-size: 1.2rem;
+    text-align: center;
+    min-height: 52px;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.3s;
+    width: 100%; max-width: 700px;
+  }
+  #question-box.correct { background: #1b4332; color: #6ee7b7; }
+  #question-box.wrong   { background: #4c1130; color: #fca5a5; }
+
+  #timer-bar-wrap {
+    width: 100%; max-width: 700px;
+    height: 8px; background: #16213e; border-radius: 10px; margin-bottom: 14px; overflow: hidden;
+  }
+  #timer-bar { height: 100%; border-radius: 10px; transition: width 0.1s linear, background 0.5s; width: 0%; }
+
+  #map-container {
+    width: 100%; max-width: 700px;
+    background: #0d1b3e;
+    border-radius: 16px;
+    padding: 8px;
+    box-shadow: 0 4px 30px rgba(0,0,0,0.5);
+  }
+  svg { width: 100%; height: auto; display: block; }
+
+  .regione {
+    fill: #2d4a8a;
+    stroke: #5a85cc;
+    stroke-width: 0.6;
+    stroke-linejoin: round;
+    cursor: pointer;
+    transition: fill 0.15s;
+  }
+  .regione:hover { fill: #4a72c0; }
+  .regione.target { fill: #b8940a; stroke: #f0c040; stroke-width: 1.2; }
+  .regione.correct-hit { fill: #22c87a; stroke: #6ee7b7; stroke-width: 1.2; cursor: default; }
+  .regione.wrong-hit   { fill: #e05050; stroke: #fca5a5; stroke-width: 1.2; }
+  .regione.disabled    { cursor: default; }
+
+  button {
+    background: #f0c040; color: #1a1a2e; border: none;
+    padding: 10px 28px; border-radius: 10px; font-size: 1rem;
+    font-weight: bold; cursor: pointer; transition: background 0.2s;
+  }
+  button:hover { background: #ffd700; }
+
+  #loading { color: #aaa; font-style: italic; }
+</style>
+</head>
+<body>
+
+<h1>🇮🇹 Quiz Regioni d'Italia</h1>
+
+<div id="hud">
+  <div class="hud-item">Punteggio: <span id="score">0</span></div>
+  <div class="hud-item">Domanda: <span id="qnum">0</span>/20</div>
+  <div class="hud-item">Vite: <span id="lives">❤️❤️❤️</span></div>
+</div>
+
+<div id="controls">
+  <button id="start-btn" onclick="startGame()" disabled>⏳ Caricamento...</button>
+  <span id="status-msg">Caricamento mappa...</span>
+</div>
+
+<div id="question-box">Trova le regioni sulla mappa!</div>
+<div id="timer-bar-wrap"><div id="timer-bar"></div></div>
+
+<div id="map-container">
+  <svg id="italy-svg" viewBox="0 0 500 600"></svg>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script>
+const NAMES = {
+  "Piemonte": "Piemonte",
+  "Valle d'Aosta/Vallée d'Aoste": "Valle d'Aosta",
+  "Lombardia": "Lombardia",
+  "Trentino-Alto Adige/Südtirol": "Trentino-Alto Adige",
+  "Veneto": "Veneto",
+  "Friuli-Venezia Giulia": "Friuli-Venezia Giulia",
+  "Liguria": "Liguria",
+  "Emilia-Romagna": "Emilia-Romagna",
+  "Toscana": "Toscana",
+  "Umbria": "Umbria",
+  "Marche": "Marche",
+  "Lazio": "Lazio",
+  "Abruzzo": "Abruzzo",
+  "Molise": "Molise",
+  "Campania": "Campania",
+  "Puglia": "Puglia",
+  "Basilicata": "Basilicata",
+  "Calabria": "Calabria",
+  "Sicilia": "Sicilia",
+  "Sardegna": "Sardegna"
+};
+
+const REGIONI = Object.values(NAMES);
+
+let queue = [], current = null, score = 0, lives = 3, qnum = 0;
+let timerInterval = null, timeLeft = 10, answering = false;
+const TOTAL = 20, TIME = 10;
+let bestScores = JSON.parse(localStorage.getItem('quiz-italia-best') || '[]');
+let mapLoaded = false;
+
+function shuffle(arr) { return [...arr].sort(() => Math.random() - 0.5); }
+
+// Load the map using D3 + public GeoJSON
+async function loadMap() {
+  try {
+    const data = await d3.json("https://raw.githubusercontent.com/openpolis/geojson-italy/master/geojson/limits_IT_regions.geojson");
+
+    const svg = d3.select("#italy-svg");
+    const projection = d3.geoMercator().fitSize([500, 600], data);
+    const path = d3.geoPath().projection(projection);
+
+    svg.selectAll("path")
+      .data(data.features)
+      .enter()
+      .append("path")
+      .attr("class", "regione")
+      .attr("d", path)
+      .attr("data-name", d => NAMES[d.properties.reg_name] || d.properties.reg_name)
+      .on("click", function() { onRegionClick(this); });
+
+    mapLoaded = true;
+    document.getElementById('start-btn').disabled = false;
+    document.getElementById('start-btn').textContent = '▶ Inizia!';
+    document.getElementById('status-msg').textContent = 'Clicca Inizia per cominciare';
+
+  } catch(e) {
+    document.getElementById('status-msg').textContent = 'Errore caricamento mappa. Controlla la connessione.';
+    console.error(e);
+  }
+}
+
+function startGame() {
+  if (!mapLoaded) return;
+  score = 0; lives = 3; qnum = 0;
+  queue = shuffle(REGIONI);
+  d3.selectAll('.regione').attr('class', 'regione');
+  document.getElementById('status-msg').textContent = '';
+  document.getElementById('start-btn').textContent = '▶ Ricomincia';
+  updateHUD();
+  nextQuestion();
+}
+
+function updateHUD() {
+  document.getElementById('score').textContent = score;
+  document.getElementById('qnum').textContent = qnum;
+  document.getElementById('lives').textContent = '❤️'.repeat(lives) + '🖤'.repeat(3 - lives);
+}
+
+function nextQuestion() {
+  clearInterval(timerInterval);
+  d3.selectAll('.regione.wrong-hit').classed('wrong-hit', false);
+  d3.selectAll('.regione.target').classed('target', false);
+
+  if (qnum >= TOTAL || lives <= 0) { endGame(); return; }
+
+  if (!queue.length) queue = shuffle(REGIONI);
+  current = queue.shift();
+  qnum++;
+  answering = true;
+
+  const qbox = document.getElementById('question-box');
+  qbox.className = '';
+  qbox.textContent = `Clicca sulla regione: ${current}`;
+
+  timeLeft = TIME;
+  updateTimerBar();
+  timerInterval = setInterval(() => {
+    timeLeft -= 0.1;
+    if (timeLeft <= 0) { timeLeft = 0; updateTimerBar(); onTimeout(); }
+    else updateTimerBar();
+  }, 100);
+
+  updateHUD();
+}
+
+function updateTimerBar() {
+  const pct = Math.max(0, (timeLeft / TIME) * 100);
+  const bar = document.getElementById('timer-bar');
+  bar.style.width = pct + '%';
+  bar.style.background = pct > 50 ? '#f0c040' : pct > 25 ? '#f97316' : '#ef4444';
+}
+
+function onTimeout() {
+  if (!answering) return;
+  answering = false;
+  clearInterval(timerInterval);
+  lives--;
+  const qbox = document.getElementById('question-box');
+  qbox.className = 'wrong';
+  qbox.textContent = `⏱️ Tempo scaduto! Era: ${current}`;
+  highlightTarget();
+  updateHUD();
+  setTimeout(nextQuestion, 2000);
+}
+
+function highlightTarget() {
+  d3.selectAll('.regione').filter(function() {
+    return this.dataset.name === current;
+  }).classed('target', true);
+}
+
+function onRegionClick(el) {
+  if (!answering) return;
+  answering = false;
+  clearInterval(timerInterval);
+  const qbox = document.getElementById('question-box');
+
+  if (el.dataset.name === current) {
+    const bonus = Math.round(timeLeft);
+    score += 10 + bonus;
+    qbox.className = 'correct';
+    qbox.textContent = `✅ Corretto! +${10 + bonus} punti (bonus tempo: +${bonus})`;
+    d3.select(el).classed('correct-hit', true);
+  } else {
+    lives--;
+    qbox.className = 'wrong';
+    qbox.textContent = `❌ Sbagliato! Era: ${current}`;
+    d3.select(el).classed('wrong-hit', true);
+    highlightTarget();
+  }
+  updateHUD();
+  setTimeout(nextQuestion, 1800);
+}
+
+function endGame() {
+  clearInterval(timerInterval);
+  answering = false;
+  bestScores.push(score);
+  bestScores.sort((a, b) => b - a);
+  bestScores = bestScores.slice(0, 5);
+  localStorage.setItem('quiz-italia-best', JSON.stringify(bestScores));
+
+  const qbox = document.getElementById('question-box');
+  qbox.className = lives > 0 ? 'correct' : 'wrong';
+  qbox.textContent = lives > 0 ? `🏆 Completato! Punteggio: ${score}` : `💔 Game Over! Punteggio: ${score}`;
+  document.getElementById('status-msg').textContent = 'Migliori: ' + bestScores.join(' · ');
+  d3.selectAll('.regione').classed('disabled', true);
+}
+
+loadMap();
+</script>
+</body>
+</html>

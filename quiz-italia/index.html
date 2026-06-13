@@ -138,7 +138,7 @@ let geoLayer = null;
 function shuffle(arr) { return [...arr].sort(() => Math.random() - 0.5); }
 
 // Inizializza la mappa Leaflet con tile satellite ESRI (gratuiti, no API key)
-const map = L.map('map', { zoomControl: true, dragging: true, scrollWheelZoom: true, minZoom: 5, maxZoom: 10 })
+const map = L.map('map', { zoomControl: true, dragging: true, scrollWheelZoom: true, minZoom: 5, maxZoom: 10, wheelPxPerZoomLevel: 150, zoomSnap: 0.25 })
               .setView([42.5, 12.5], 6);
 
 L.tileLayer(

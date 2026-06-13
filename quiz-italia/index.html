@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Quiz Geografico Italia</title>
+<title>Quiz Regioni d'Italia</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -93,7 +93,7 @@
 </div>
 
 <div id="controls">
-  <button id="start-btn" onclick="startGame()" disabled>⏳ Caricamento...</button>
+  <button id="start-btn" disabled>⏳ Caricamento...</button>
   <span id="status-msg">Caricamento mappa...</span>
 </div>
 
@@ -276,6 +276,7 @@ function endGame() {
   d3.selectAll('.regione').classed('disabled', true);
 }
 
+document.getElementById('start-btn').addEventListener('click', startGame);
 loadMap();
 </script>
 </body>

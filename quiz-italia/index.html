@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Quiz Regioni d'Italia</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -49,28 +50,13 @@
   }
   #timer-bar { height: 100%; border-radius: 10px; transition: width 0.1s linear, background 0.5s; width: 0%; }
 
-  #map-container {
+  #map {
     width: 100%; max-width: 700px;
-    background: #0d1b3e;
+    height: 520px;
     border-radius: 16px;
-    padding: 8px;
+    overflow: hidden;
     box-shadow: 0 4px 30px rgba(0,0,0,0.5);
   }
-  svg { width: 100%; height: auto; display: block; }
-
-  .regione {
-    fill: #2d4a8a;
-    stroke: #5a85cc;
-    stroke-width: 0.6;
-    stroke-linejoin: round;
-    cursor: pointer;
-    transition: fill 0.15s;
-  }
-  .regione:hover { fill: #4a72c0; }
-  .regione.target { fill: #b8940a; stroke: #f0c040; stroke-width: 1.2; }
-  .regione.correct-hit { fill: #22c87a; stroke: #6ee7b7; stroke-width: 1.2; cursor: default; }
-  .regione.wrong-hit   { fill: #e05050; stroke: #fca5a5; stroke-width: 1.2; }
-  .regione.disabled    { cursor: default; }
 
   button {
     background: #f0c040; color: #1a1a2e; border: none;
@@ -78,8 +64,10 @@
     font-weight: bold; cursor: pointer; transition: background 0.2s;
   }
   button:hover { background: #ffd700; }
+  button:disabled { opacity: 0.5; cursor: default; }
 
-  #loading { color: #aaa; font-style: italic; }
+  /* Nasconde i controlli Leaflet che non servono al gioco */
+  .leaflet-control-zoom { display: none; }
 </style>
 </head>
 <body>
@@ -94,17 +82,15 @@
 
 <div id="controls">
   <button id="start-btn" disabled>⏳ Caricamento...</button>
-  <span id="status-msg">Caricamento mappa...</span>
+  <span id="status-msg">Caricamento mappa satellitare...</span>
 </div>
 
 <div id="question-box">Trova le regioni sulla mappa!</div>
 <div id="timer-bar-wrap"><div id="timer-bar"></div></div>
 
-<div id="map-container">
-  <svg id="italy-svg" viewBox="0 0 500 600"></svg>
-</div>
+<div id="map"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const NAMES = {
   "Piemonte": "Piemonte",
@@ -131,31 +117,54 @@ const NAMES = {
 
 const REGIONI = Object.values(NAMES);
 
+const STYLE_DEFAULT  = { color: '#5a85cc', weight: 1.5, fillColor: '#2d4a8a', fillOpacity: 0.35 };
+const STYLE_HOVER    = { fillColor: '#4a72c0', fillOpacity: 0.55 };
+const STYLE_TARGET   = { color: '#f0c040', weight: 2.5, fillColor: '#b8940a', fillOpacity: 0.5 };
+const STYLE_CORRECT  = { color: '#6ee7b7', weight: 2,   fillColor: '#22c87a', fillOpacity: 0.6 };
+const STYLE_WRONG    = { color: '#fca5a5', weight: 2,   fillColor: '#e05050', fillOpacity: 0.6 };
+
 let queue = [], current = null, score = 0, lives = 3, qnum = 0;
 let timerInterval = null, timeLeft = 10, answering = false;
 const TOTAL = 20, TIME = 10;
 let bestScores = JSON.parse(localStorage.getItem('quiz-italia-best') || '[]');
 let mapLoaded = false;
+let geoLayer = null;
 
 function shuffle(arr) { return [...arr].sort(() => Math.random() - 0.5); }
 
-// Load the map using D3 + public GeoJSON
+// Inizializza la mappa Leaflet con tile satellite ESRI (gratuiti, no API key)
+const map = L.map('map', { zoomControl: false, dragging: false, scrollWheelZoom: false })
+              .setView([42.5, 12.5], 5);
+
+L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  { attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community' }
+).addTo(map);
+
 async function loadMap() {
   try {
-    const data = await d3.json("https://raw.githubusercontent.com/openpolis/geojson-italy/master/geojson/limits_IT_regions.geojson");
+    const res = await fetch('https://raw.githubusercontent.com/openpolis/geojson-italy/master/geojson/limits_IT_regions.geojson');
+    const data = await res.json();
 
-    const svg = d3.select("#italy-svg");
-    const projection = d3.geoMercator().fitSize([500, 600], data);
-    const path = d3.geoPath().projection(projection);
+    geoLayer = L.geoJSON(data, {
+      style: STYLE_DEFAULT,
+      onEachFeature(feature, layer) {
+        const name = NAMES[feature.properties.reg_name] || feature.properties.reg_name;
+        layer.options.regionName = name;
 
-    svg.selectAll("path")
-      .data(data.features)
-      .enter()
-      .append("path")
-      .attr("class", "regione")
-      .attr("d", path)
-      .attr("data-name", d => NAMES[d.properties.reg_name] || d.properties.reg_name)
-      .on("click", function() { onRegionClick(this); });
+        layer.on('mouseover', function() {
+          if (!answering) return;
+          const s = this.options.currentStyle || STYLE_DEFAULT;
+          if (s === STYLE_DEFAULT) this.setStyle(STYLE_HOVER);
+        });
+        layer.on('mouseout', function() {
+          if (!answering) return;
+          const s = this.options.currentStyle;
+          if (!s || s === STYLE_DEFAULT) this.setStyle(STYLE_DEFAULT);
+        });
+        layer.on('click', function() { onRegionClick(this); });
+      }
+    }).addTo(map);
 
     mapLoaded = true;
     document.getElementById('start-btn').disabled = false;
@@ -168,11 +177,19 @@ async function loadMap() {
   }
 }
 
+function resetAllStyles() {
+  if (!geoLayer) return;
+  geoLayer.eachLayer(l => {
+    l.options.currentStyle = STYLE_DEFAULT;
+    l.setStyle(STYLE_DEFAULT);
+  });
+}
+
 function startGame() {
   if (!mapLoaded) return;
   score = 0; lives = 3; qnum = 0;
   queue = shuffle(REGIONI);
-  d3.selectAll('.regione').attr('class', 'regione');
+  resetAllStyles();
   document.getElementById('status-msg').textContent = '';
   document.getElementById('start-btn').textContent = '▶ Ricomincia';
   updateHUD();
@@ -187,8 +204,14 @@ function updateHUD() {
 
 function nextQuestion() {
   clearInterval(timerInterval);
-  d3.selectAll('.regione.wrong-hit').classed('wrong-hit', false);
-  d3.selectAll('.regione.target').classed('target', false);
+
+  // Rimuove solo i colori temporanei (wrong), lascia i correct-hit
+  geoLayer.eachLayer(l => {
+    if (l.options.currentStyle === STYLE_WRONG || l.options.currentStyle === STYLE_TARGET) {
+      l.options.currentStyle = STYLE_DEFAULT;
+      l.setStyle(STYLE_DEFAULT);
+    }
+  });
 
   if (qnum >= TOTAL || lives <= 0) { endGame(); return; }
 
@@ -219,6 +242,15 @@ function updateTimerBar() {
   bar.style.background = pct > 50 ? '#f0c040' : pct > 25 ? '#f97316' : '#ef4444';
 }
 
+function highlightTarget() {
+  geoLayer.eachLayer(l => {
+    if (l.options.regionName === current) {
+      l.options.currentStyle = STYLE_TARGET;
+      l.setStyle(STYLE_TARGET);
+    }
+  });
+}
+
 function onTimeout() {
   if (!answering) return;
   answering = false;
@@ -232,29 +264,25 @@ function onTimeout() {
   setTimeout(nextQuestion, 2000);
 }
 
-function highlightTarget() {
-  d3.selectAll('.regione').filter(function() {
-    return this.dataset.name === current;
-  }).classed('target', true);
-}
-
-function onRegionClick(el) {
+function onRegionClick(layer) {
   if (!answering) return;
   answering = false;
   clearInterval(timerInterval);
   const qbox = document.getElementById('question-box');
 
-  if (el.dataset.name === current) {
+  if (layer.options.regionName === current) {
     const bonus = Math.round(timeLeft);
     score += 10 + bonus;
     qbox.className = 'correct';
     qbox.textContent = `✅ Corretto! +${10 + bonus} punti (bonus tempo: +${bonus})`;
-    d3.select(el).classed('correct-hit', true);
+    layer.options.currentStyle = STYLE_CORRECT;
+    layer.setStyle(STYLE_CORRECT);
   } else {
     lives--;
     qbox.className = 'wrong';
     qbox.textContent = `❌ Sbagliato! Era: ${current}`;
-    d3.select(el).classed('wrong-hit', true);
+    layer.options.currentStyle = STYLE_WRONG;
+    layer.setStyle(STYLE_WRONG);
     highlightTarget();
   }
   updateHUD();
@@ -273,7 +301,6 @@ function endGame() {
   qbox.className = lives > 0 ? 'correct' : 'wrong';
   qbox.textContent = lives > 0 ? `🏆 Completato! Punteggio: ${score}` : `💔 Game Over! Punteggio: ${score}`;
   document.getElementById('status-msg').textContent = 'Migliori: ' + bestScores.join(' · ');
-  d3.selectAll('.regione').classed('disabled', true);
 }
 
 document.getElementById('start-btn').addEventListener('click', startGame);

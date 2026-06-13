@@ -66,8 +66,13 @@
   button:hover { background: #ffd700; }
   button:disabled { opacity: 0.5; cursor: default; }
 
-  /* Nasconde i controlli Leaflet che non servono al gioco */
-  .leaflet-control-zoom { display: none; }
+  .leaflet-control-zoom a {
+    background: #16213e !important;
+    color: #f0c040 !important;
+    border-color: #2d4a8a !important;
+    font-weight: bold;
+  }
+  .leaflet-control-zoom a:hover { background: #2d4a8a !important; }
 </style>
 </head>
 <body>
@@ -133,8 +138,8 @@ let geoLayer = null;
 function shuffle(arr) { return [...arr].sort(() => Math.random() - 0.5); }
 
 // Inizializza la mappa Leaflet con tile satellite ESRI (gratuiti, no API key)
-const map = L.map('map', { zoomControl: false, dragging: false, scrollWheelZoom: false })
-              .setView([42.5, 12.5], 5);
+const map = L.map('map', { zoomControl: true, dragging: true, scrollWheelZoom: true, minZoom: 5, maxZoom: 10 })
+              .setView([42.5, 12.5], 6);
 
 L.tileLayer(
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
